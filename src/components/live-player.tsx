@@ -26,13 +26,28 @@ export function isFlvUrl(url: string): boolean {
   return /\.flv(\?|$)/i.test(url);
 }
 
-/** 浏览器原生可播的直链容器（非 HLS/FLV） */
+/**
+ * HTTP 裸 MPEG-TS 流（既不是 FLV，也不是 HLS 清单）。
+ *
+ * 典型来源：rtp2httpd 把运营商 RTSP 单播转成的 `http://host:26426/rtsp/…/xxx.sdp`。
+ * 浏览器不能直接播 TS，必须交给 mpegts.js 转封装进 MSE。官方原本只有
+ * hls/flv/native 三档，这类地址会被误判成 hls 丢给 hls.js——hls.js 拿到的是
+ * 裸 TS（首字节 0x47、无清单），必然解析失败，白拉一路高清流后黑屏。
+ */
+export function isTsUrl(url: string): boolean {
+  if (/\.ts(\?|$)/i.test(url)) return true;
+  if (/\.(sdp|mpegts)(\?|$)/i.test(url)) return true;
+  return /\/rtsp\//i.test(url);
+}
+
+/** 浏览器原生可播的直链容器（非 HLS/FLV/TS） */
 const NATIVE_MEDIA_RE = /\.(mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i;
 
-type Engine = 'hls' | 'flv' | 'native';
+type Engine = 'hls' | 'flv' | 'ts' | 'native';
 
 function engineOf(url: string): Engine {
   if (isFlvUrl(url)) return 'flv';
+  if (isTsUrl(url)) return 'ts';
   if (NATIVE_MEDIA_RE.test(url)) return 'native';
   return 'hls';
 }
@@ -221,7 +236,9 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     const setupFlv = async (
       video: HTMLVideoElement,
       mediaUrl: string,
-      allowProxyFallback: boolean
+      allowProxyFallback: boolean,
+      /** mpegts.js 的输入类型：flv = FLV 流；mse = 裸 MPEG-TS over HTTP（rtp2httpd 输出） */
+      container: 'flv' | 'mse' = 'flv'
     ) => {
       cleanupEngines();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -229,17 +246,17 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       try {
         Mpegts = (await import('mpegts.js')).default;
       } catch {
-        setError('FLV 播放模块加载失败，请检查网络后重试');
+        setError('直播播放模块加载失败，请检查网络后重试');
         return;
       }
       if (disposed || destroyed) return;
       if (!Mpegts.getFeatureList().mseLivePlayback) {
-        setError('当前浏览器不支持 FLV 直播播放');
+        setError('当前浏览器不支持 MSE 直播播放');
         return;
       }
       const player = Mpegts.createPlayer(
         {
-          type: 'flv',
+          type: container,
           isLive: true,
           url: mediaUrl,
         },
@@ -301,7 +318,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       container: containerRef.current,
       url,
       // 原生容器统一用 'mp4'（仅用于选择处理函数，实际容器由浏览器嗅探）
-      type: engine === 'flv' ? 'flv' : engine === 'native' ? 'mp4' : 'm3u8',
+      type: engine === 'flv' ? 'flv' : engine === 'ts' ? 'ts' : engine === 'native' ? 'mp4' : 'm3u8',
       volume: 0.9,
       autoplay: true,
       // —— 直播态：关闭点播专属能力 ——
@@ -328,6 +345,10 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         },
         flv: (video: HTMLVideoElement) => {
           void setupFlv(video, url, true);
+        },
+        // HTTP 裸 TS（rtp2httpd 等）：mpegts.js 以 mse 模式转封装进 MediaSource
+        ts: (video: HTMLVideoElement) => {
+          void setupFlv(video, url, true, 'mse');
         },
         mp4: (video: HTMLVideoElement) => {
           setupNative(video, url, true);

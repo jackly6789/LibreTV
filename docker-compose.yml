@@ -28,6 +28,10 @@ services:
       # - DEFAULT_RECOMMEND_SOURCE=douban
       # 可选：自建内网 IPTV 放行（对拉列表、测活、拉流三个阶段同时生效，默认关闭以维持 SSRF 防护）
       # - LIVE_ALLOW_PRIVATE=1
+      # 可选：自建服务主机白名单（逗号分隔的主机名），名单内主机跳过 SSRF 的 DNS 私网校验，
+      # 其余规则不变。适合「内网 DNS 把自有域名解析到内网 IP」的场景（自建订阅站 / IPTV）。
+      # 值放 .env（已被 .gitignore 忽略），仓库里只留变量引用，避免暴露真实域名。
+      - UPSTREAM_ALLOW_HOSTS=${UPSTREAM_ALLOW_HOSTS:-}
       # 可选：代理上游请求超时（毫秒）与重试次数
       # - REQUEST_TIMEOUT=8000
       # - MAX_RETRIES=1

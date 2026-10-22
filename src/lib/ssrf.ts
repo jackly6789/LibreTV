@@ -74,7 +74,32 @@ export type UpstreamVerdict = { ok: true } | { ok: false; reason: string };
  * 任何由用户输入驱动的服务端请求（采集站搜索/详情、代理转发）都必须先过这一关，
  * 否则服务器会变成内网探测跳板（/api/search 曾直接用用户传的 source.url 发请求）。
  */
+/**
+ * 自建服务主机白名单：名单内主机名跳过 DNS 私网校验，其余规则（协议、字面量 IP、
+ * 其它主机的解析结果）一律不变。
+ *
+ * 用途：内网 DNS 把自有域名重写到内网 IP 时（如 AdGuard Home 的 DNS 重写、
+ * 自建 IPTV / 自建订阅站），服务端解析会拿到 192.168.x.x 而被 SSRF 判为非法，
+ * 明明只是访问「自己家的服务」却被拦住。由部署者显式配置
+ * UPSTREAM_ALLOW_HOSTS（逗号分隔的主机名）放行；未配置时本函数恒为 false，
+ * 上游行为与官方完全一致。
+ */
+export function isAllowlistedHost(urlString: string): boolean {
+  const list = (process.env.UPSTREAM_ALLOW_HOSTS || '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (list.length === 0) return false;
+  try {
+    const host = stripBrackets(new URL(urlString).hostname).toLowerCase();
+    return list.includes(host);
+  } catch {
+    return false;
+  }
+}
+
 export async function checkUpstreamAllowed(urlString: string): Promise<UpstreamVerdict> {
+  if (isAllowlistedHost(urlString)) return { ok: true };
   if (!isValidProxyUrl(urlString)) {
     return { ok: false, reason: '目标地址不在允许范围内（仅支持公网 http/https）' };
   }
